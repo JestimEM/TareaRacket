@@ -5,23 +5,32 @@
 ;; ==========================================
 ;; VARIABLES DE ESTADO GLOBALES Y ANIMACIÓN
 ;; ==========================================
+;; Estas variables mantienen el estado de la interfaz sin reiniciar el programa.
 (define filas 4)
 (define columnas 4)
 (define tablero '())
-(define estado-juego 'jugando)
+(define estado-juego 'jugando) ;; Posibles estados: 'jugando, 'ganaste, 'perdiste, 'continuando
 
-(define animando? #f)
-(define tablero-viejo '())
-(define tablero-futuro '())
-(define direccion-anim 'left)
-(define matriz-destinos #()) 
-(define anim-frames 0)
-(define MAX-FRAMES 7) 
+;; Variables exclusivas para controlar el motor de renderizado y animaciones
+(define animando? #f)          ;; Bandera para saber si hay una animación en curso (bloquea teclado)
+(define tablero-viejo '())     ;; Guarda la "foto" del tablero antes de moverse
+(define tablero-futuro '())    ;; Guarda el resultado matemático final
+(define direccion-anim 'left)  ;; Dirección hacia la que patinan las fichas
+(define matriz-destinos #())   ;; Matriz auxiliar con las coordenadas exactas de parada
+(define anim-frames 0)         ;; Contador del fotograma actual
+(define MAX-FRAMES 7)          ;; Cantidad total de fotogramas por movimiento (define la velocidad)
 
 ;; ==========================================
 ;; FUNCIÓN DE VALIDACIÓN DE ENTRADAS
 ;; ==========================================
-;; Verifica que el texto sea un número entero, >= 4 y <= 10
+
+;; Funcion: validar-entrada
+;; Descripción: Actúa como un filtro de seguridad (sanitización). Recibe el texto escrito por 
+;; el usuario en las cajas de configuración y verifica que sea un número entero válido 
+;; dentro del rango permitido para que el juego no colapse ni se congele.
+;; Entradas: texto (String ingresado por el usuario)
+;; Salidas: El número convertido a entero si es válido. Retorna #f (falso) si tiene letras, 
+;; decimales o está fuera del rango (menor a 4 o mayor a 10).
 (define (validar-entrada texto)
   (let ((num (string->number texto)))
     (if (and num (integer? num) (>= num 4) (<= num 10))
@@ -31,12 +40,27 @@
 ;; ==========================================
 ;; LÓGICA DE CÁLCULO DE DESTINOS INDIVIDUALES
 ;; ==========================================
+
+;; Funcion: obtener-fila
+;; Descripción: Extrae una fila específica de la matriz utilizando coordenadas exactas.
+;; Entradas: mat (matriz actual), f (índice de la fila), cols (cantidad de columnas)
+;; Salidas: Una lista plana con los elementos de esa fila.
 (define (obtener-fila mat f cols)
   (for/list ([c (in-range cols)]) (extraer-mat f c mat)))
 
+;; Funcion: obtener-col
+;; Descripción: Extrae una columna específica simulando una transposición local.
+;; Entradas: mat (matriz actual), c (índice de la columna), fils (cantidad de filas)
+;; Salidas: Una lista plana con los elementos de esa columna.
 (define (obtener-col mat c fils)
   (for/list ([f (in-range fils)]) (extraer-mat f c mat)))
 
+;; Funcion: calcular-destinos-linea
+;; Descripción: Simula matemáticamente las colisiones de una sola línea (fila o columna).
+;; Calcula exactamente en qué índice va a terminar cada casilla para que la animación
+;; gráfica sepa a qué distancia en píxeles debe deslizar cada cuadro.
+;; Entradas: linea (lista de números), reversa? (booleano para invertir el cálculo si va a la derecha/abajo)
+;; Salidas: Un vector con los índices de destino correspondientes a cada elemento original.
 (define (calcular-destinos-linea linea reversa?)
   (let* ((len (length linea))
          (linea-trabajo (if reversa? (reverse linea) linea))
@@ -67,6 +91,12 @@
           destinos-reales)
         destinos)))
 
+;; Funcion: generar-matriz-destinos
+;; Descripción: Orquesta el cálculo de destinos para todo el tablero. Evalúa la dirección
+;; presionada por el usuario y genera una "matriz espejo" donde cada celda contiene 
+;; la coordenada final hacia donde debe patinar la ficha en la pantalla.
+;; Entradas: matriz (tablero actual), dir (símbolo de dirección: 'up, 'down, 'left, 'right), fils, cols.
+;; Salidas: Un vector de vectores (matriz optimizada) con los índices finales.
 (define (generar-matriz-destinos matriz dir fils cols)
   (let ((m-dest (make-vector fils)))
     (for ([f (in-range fils)]) (vector-set! m-dest f (make-vector cols 0)))
@@ -92,6 +122,11 @@
 ;; ==========================================
 ;; COLORES ESTILO 2048
 ;; ==========================================
+
+;; Funcion: obtener-color-fondo
+;; Descripción: Mapea un valor numérico a un objeto de color (RGB) para rellenar el fondo de la casilla.
+;; Entradas: num (valor entero de la ficha)
+;; Salidas: Un objeto `color%` de la librería racket/gui.
 (define (obtener-color-fondo num)
   (cond ((= num 0) (make-object color% 205 193 180))
         ((= num 2) (make-object color% 238 228 218))
@@ -107,16 +142,26 @@
         ((= num 2048) (make-object color% 237 194 46))
         (else (make-object color% 60 58 50))))
 
+;; Funcion: obtener-color-texto
+;; Descripción: Decide el color de la fuente para asegurar contraste. Letra oscura para
+;; números bajos y letra blanca para números altos.
+;; Entradas: num (valor entero de la ficha)
+;; Salidas: Un objeto `color%` oscuro o claro.
 (define (obtener-color-texto num)
   (if (<= num 4)
       (make-object color% 119 110 101)
       (make-object color% 249 246 242)))
 
 ;; ==========================================
-;; VENTANA PRINCIPAL DEL JUEGO
+;; VENTANA PRINCIPAL DEL JUEGO Y COMPONENTES
 ;; ==========================================
+
+;; Componente: ventana-juego
+;; Marco (frame) principal de la aplicación donde ocurre la jugabilidad.
 (define ventana-juego (new frame% [label "2048 - Jugando"] [width 500] [height 600]))
 
+;; Componente: panel-superior y btn-opciones
+;; Contenedor horizontal que aloja el botón para acceder al menú de configuración en medio del juego.
 (define panel-superior (new horizontal-panel% 
                             [parent ventana-juego]
                             [stretchable-height #f]
@@ -127,6 +172,10 @@
   (new button% [parent panel-superior] [label "⚙️ Opciones / Reiniciar Juego"]
        [callback (lambda (boton evento) (mostrar-dialogo-opciones))]))
 
+;; Componente: timer-animacion
+;; Descripción: Es el motor que da vida al juego. Se ejecuta cada 15ms cuando se detecta
+;; un movimiento. Aumenta los frames, obliga al lienzo a redibujarse creando el efecto visual
+;; de deslizamiento, y al terminar, inserta la nueva ficha y evalúa si se ganó o se perdió.
 (define timer-animacion
   (new timer% [notify-callback
                (lambda ()
@@ -146,6 +195,10 @@
                               (mostrar-derrota))))
                      (send lienzo refresh)))]))
 
+;; Componente: mi-canvas%
+;; Descripción: Es una clase hija de canvas% que sobrescribe el evento del teclado (`on-char`).
+;; Aquí se capturan las flechas direccionales, se calcula matemáticamente el tablero futuro,
+;; y si el movimiento es válido, se activa el motor de animación temporal.
 (define mi-canvas%
   (class canvas%
     (super-new)
@@ -168,6 +221,10 @@
             (set! matriz-destinos (generar-matriz-destinos tablero-viejo tecla filas columnas))
             (send timer-animacion start 15)))))))
 
+;; Componente: lienzo
+;; Descripción: La superficie gráfica donde se dibuja el fondo y se pintan los rectángulos 
+;; (fichas). Utiliza interpolación matemática con la variable "progreso" para mover 
+;; los píxeles gradualmente simulando un deslizamiento suave en la pantalla.
 (define lienzo 
   (new mi-canvas% [parent ventana-juego]
        [paint-callback
@@ -224,6 +281,9 @@
 ;; ==========================================
 ;; CUADROS DE DIÁLOGO Y OPCIONES
 ;; ==========================================
+
+;; Funcion: mostrar-victoria
+;; Detiene el flujo e invoca una alerta del sistema para felicitar al jugador al alcanzar 2048.
 (define (mostrar-victoria)
   (let ((respuesta (message-box/custom "¡Ganaste!" 
                                        "¡Felicidades, has llegado a la casilla 2048!\n¿Qué deseas hacer ahora?"
@@ -232,11 +292,15 @@
         (begin (set! estado-juego 'continuando) (send lienzo focus))
         (mostrar-dialogo-opciones))))
 
+;; Funcion: mostrar-derrota
+;; Detiene el flujo informando al jugador que ya no quedan combinaciones matemáticas posibles.
 (define (mostrar-derrota)
   (let ((respuesta (message-box/custom "Derrota" "¡Te has quedado sin movimientos posibles!"
                                        "Reiniciar Juego" #f #f ventana-juego)))
     (mostrar-dialogo-opciones)))
 
+;; Componente: dialogo-opciones
+;; Ventana emergente (modal) que permite al usuario modificar el tamaño de las filas y columnas a mitad de partida.
 (define dialogo-opciones (new dialog% [label "Opciones de Juego"] [parent ventana-juego] [width 250]))
 (define panel-opc (new horizontal-panel% [parent dialogo-opciones] [alignment '(center center)]))
 
@@ -260,9 +324,11 @@
                            (send dialogo-opciones show #f)
                            (send lienzo focus)
                            (send lienzo refresh))
-                         ;; Mensaje de error actualizado
+                         ;; Mensaje de error actualizado si la validación falla
                          (message-box "Error de Entrada" "Por favor ingrese números enteros entre 4 y 10." #f '(stop ok)))))]))
 
+;; Funcion: mostrar-dialogo-opciones
+;; Pre-llena las cajas de texto con los valores actuales antes de mostrar la ventana modal.
 (define (mostrar-dialogo-opciones)
   (send txt-filas-opc set-value (number->string filas))
   (send txt-cols-opc set-value (number->string columnas))
@@ -271,6 +337,9 @@
 ;; ==========================================
 ;; VENTANA DE BIENVENIDA 
 ;; ==========================================
+
+;; Componente: ventana-inicio
+;; El primer marco visible al arrancar el programa. Recibe los parámetros iniciales del juego.
 (define ventana-inicio (new frame% [label "2048"] [width 400] [height 220]))
 
 (define panel-bienvenida (new vertical-panel% [parent ventana-inicio] [alignment '(center center)] [spacing 15]))
@@ -284,10 +353,13 @@
 (define txt-filas-inicio (new text-field% [label "Filas:"] [parent panel-inputs-inicio] [init-value "4"]))
 (define txt-cols-inicio (new text-field% [label "Columnas:"] [parent panel-inputs-inicio] [init-value "4"]))
 
+;; Componente: btn-iniciar
+;; Valida la entrada inicial, genera la matriz 2D llamando al motor lógico, oculta 
+;; la bienvenida y muestra el lienzo interactivo definitivo.
 (define btn-iniciar 
   (new button% [parent panel-bienvenida] [label "▶ Iniciar Juego"]
        [callback (lambda (boton evento)
-                   ;; Validación al iniciar partida
+                   ;; Validación estricta al iniciar partida
                    (let ((f-val (validar-entrada (send txt-filas-inicio get-value)))
                          (c-val (validar-entrada (send txt-cols-inicio get-value))))
                      (if (and f-val c-val)
@@ -303,4 +375,5 @@
                          ;; Mensaje de error actualizado
                          (message-box "Error de Entrada" "Por favor ingrese números enteros entre 4 y 10." #f '(stop ok)))))]))
 
+;; Muestra únicamente el menú de bienvenida para arrancar el flujo de la aplicación.
 (send ventana-inicio show #t)
